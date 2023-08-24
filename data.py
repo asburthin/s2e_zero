@@ -26,46 +26,55 @@ class CorefDataset(Dataset):
             f"Finished preprocessing Coref dataset. {len(self.examples)} examples were extracted, {self.num_examples_filtered} were filtered due to sequence length.")
 
     def _parse_jsonlines(self, file_path):
+        """Parse the jsonlines file into a list of examples.
+        Args:
+            file_path: path to the jsonlines file
+        Returns:
+            examples: list of doc_key, input_words, clusters
+            max_mention_num: maximum number of mentions in a single example
+            max_cluster_size: maximum number of mentions in a single cluster
+            max_num_clusters: maximum number of clusters in a single example
+            """
         examples = []
         max_mention_num = -1
         max_cluster_size = -1
         max_num_clusters = -1
         with open(file_path, 'r') as f:
             for line in f:
+                # Each line is a json object that represents a single example
+                # The json object contains the following fields:
+                #   doc_key: document key
+                #   sentences: list of sentences, each sentence is a list of words
+                #   clusters: list of clusters, each cluster is a list of mentions, each mention is a list of [sentence_idx, start_token_idx, end_token_idx]
+
                 d = json.loads(line.strip())
                 doc_key = d["doc_key"]
                 input_words = flatten_list_of_lists(d["sentences"])
                 clusters = d["clusters"]
+
+                # Max mention num is the maximum number of mentions in a single example
                 max_mention_num = max(max_mention_num, len(flatten_list_of_lists(clusters)))
+                # Max cluster size is the maximum number of mentions in a single cluster
                 max_cluster_size = max(max_cluster_size, max(len(cluster) for cluster in clusters) if clusters else 0)
+                # Max num clusters is the maximum number of clusters in a single example
                 max_num_clusters = max(max_num_clusters, len(clusters) if clusters else 0)
-                speakers = flatten_list_of_lists(d["speakers"])
-                examples.append((doc_key, input_words, clusters, speakers))
+                examples.append((doc_key, input_words, clusters))
         return examples, max_mention_num, max_cluster_size, max_num_clusters
 
     def _tokenize(self, examples):
+        """Tokenize the examples."""
         coref_examples = []
         lengths = []
         num_examples_filtered = 0
-        for doc_key, words, clusters, speakers in examples:
+        for doc_key, words, clusters in examples:
             word_idx_to_start_token_idx = dict()
             word_idx_to_end_token_idx = dict()
             end_token_idx_to_word_idx = [0]  # for <s>
 
             token_ids = []
-            last_speaker = None
-            for idx, (word, speaker) in enumerate(zip(words, speakers)):
-                if last_speaker != speaker:
-                    speaker_prefix = [SPEAKER_START] + self.tokenizer.encode(" " + speaker,
-                                                                             add_special_tokens=False) + [SPEAKER_END]
-                    last_speaker = speaker
-                else:
-                    speaker_prefix = []
-                for _ in range(len(speaker_prefix)):
-                    end_token_idx_to_word_idx.append(idx)
-                token_ids.extend(speaker_prefix)
+            for idx, word in enumerate(words):
                 word_idx_to_start_token_idx[idx] = len(token_ids) + 1  # +1 for <s>
-                tokenized = self.tokenizer.encode(" " + word, add_special_tokens=False)
+                tokenized = self.tokenizer.tokenize(word)
                 for _ in range(len(tokenized)):
                     end_token_idx_to_word_idx.append(idx)
                 token_ids.extend(tokenized)
@@ -76,10 +85,16 @@ class CorefDataset(Dataset):
                 continue
 
             new_clusters = [
-                [(word_idx_to_start_token_idx[start], word_idx_to_end_token_idx[end]) for start, end in cluster] for
+                [(word_idx_to_start_token_idx[start], word_idx_to_end_token_idx[end - 1]) for start, end in cluster] for
                 cluster in clusters]
             lengths.append(len(token_ids))
 
+            # CorefExample = namedtuple("CorefExample", ["token_ids", "clusters"])
+            # Example: 
+            # Text = "John Smith is a nice guy. He lives in London."
+            # CorefExample = {
+            #  token_ids: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+            #  clusters: [[(0, 1), (6, 6)]]
             coref_examples.append(((doc_key, end_token_idx_to_word_idx), CorefExample(token_ids=token_ids, clusters=new_clusters)))
         return coref_examples, lengths, num_examples_filtered
 
@@ -110,6 +125,7 @@ class CorefDataset(Dataset):
                                                       pad_to_max_length=True,
                                                       max_length=max_length,
                                                       return_attention_mask=True,
+                                                      is_split_into_words=True,
                                                       return_tensors='pt')
             clusters = self.pad_clusters(example.clusters)
             example = (encoded_dict["input_ids"], encoded_dict["attention_mask"]) + (torch.tensor(clusters),)

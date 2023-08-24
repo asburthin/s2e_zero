@@ -96,8 +96,8 @@ def main():
             "and load it from here, using --tokenizer_name"
         )
 
-    config_class = LongformerConfig
-    base_model_prefix = "longformer"
+    config_class = RobertaConfig
+    base_model_prefix = "xlm-roberta"
 
     S2E.config_class = config_class
     S2E.base_model_prefix = base_model_prefix

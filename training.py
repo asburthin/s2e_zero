@@ -17,7 +17,7 @@ def train(args, train_dataset, model, tokenizer, evaluator):
     """ Train the model """
     tb_path = os.path.join(args.tensorboard_dir, os.path.basename(args.output_dir))
     tb_writer = SummaryWriter(tb_path, flush_secs=30)
-    logger.info('Tensorboard summary path: %s' % tb_path)
+    # logger.info('Tensorboard summary path: %s' % tb_path)
 
     train_dataloader = BucketBatchSampler(train_dataset, max_total_seq_len=args.max_total_seq_len, batch_size_1=args.batch_size_1)
 

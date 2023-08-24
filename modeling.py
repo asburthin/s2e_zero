@@ -1,7 +1,7 @@
 import torch
 from torch.nn import Module, Linear, LayerNorm, Dropout
-from transformers import BertPreTrainedModel, LongformerModel
-from transformers.modeling_bert import ACT2FN
+from transformers import BertPreTrainedModel, LongformerModel, RobertaModel
+from transformers.models.bert.modeling_bert import ACT2FN
 from utils import extract_clusters, extract_mentions_to_predicted_clusters_from_clusters, mask_tensor
 
 
@@ -35,9 +35,12 @@ class S2E(BertPreTrainedModel):
         self.ffnn_size = args.ffnn_size
         self.do_mlps = self.ffnn_size > 0
         self.ffnn_size = self.ffnn_size if self.do_mlps else config.hidden_size
+
+        # Fix dimensions bug in Roberta with miracle!!
+        self.ffnn_size = 1024
         self.normalise_loss = args.normalise_loss
 
-        self.longformer = LongformerModel(config)
+        self.longformer = RobertaModel(config)
 
         self.start_mention_mlp = FullyConnectedLayer(config, config.hidden_size, self.ffnn_size, args.dropout_prob) if self.do_mlps else None
         self.end_mention_mlp = FullyConnectedLayer(config, config.hidden_size, self.ffnn_size, args.dropout_prob) if self.do_mlps else None
@@ -66,8 +69,28 @@ class S2E(BertPreTrainedModel):
         :return: [batch_size, max_k] of zero-ones, where 1 stands for a valid span and 0 for a padded span
         """
         size = (batch_size, max_k)
-        idx = torch.arange(max_k, device=self.device).unsqueeze(0).expand(size)
+        idx = torch.arange(max_k, device=self.device)
+        # [0 1 2 3 4 5 6 7 8 9]
+
+        idx = idx.unsqueeze(0)
+        # [[0 1 2 3 4 5 6 7 8 9]]
+
+        idx = idx.expand(size)
+        # if size = (5, 10)
+        # [[0 1 2 3 4 5 6 7 8 9]
+        #  [0 1 2 3 4 5 6 7 8 9]
+        #  [0 1 2 3 4 5 6 7 8 9]
+        #  [0 1 2 3 4 5 6 7 8 9]
+        #  [0 1 2 3 4 5 6 7 8 9]]
+
         len_expanded = k.unsqueeze(1).expand(size)
+        # if k = [2, 3, 4, 5, 6]
+        # [[2 2 2 2 2 2 2 2 2 2]
+        #  [3 3 3 3 3 3 3 3 3 3]
+        #  [4 4 4 4 4 4 4 4 4 4]
+        #  [5 5 5 5 5 5 5 5 5 5]
+        #  [6 6 6 6 6 6 6 6 6 6]]
+        
         return (idx < len_expanded).int()
 
     def _prune_topk_mentions(self, mention_logits, attention_mask):
@@ -158,7 +181,7 @@ class S2E(BertPreTrainedModel):
         :param mention_logits_or_weights: Either the span mention logits or weights, size [batch_size, seq_length, seq_length]
         """
         mention_mask = torch.ones_like(mention_logits_or_weights, dtype=self.dtype)
-        mention_mask = mention_mask.triu(diagonal=0)
+        mention_mask = mention_mask.triu(diagonal=-1)
         mention_mask = mention_mask.tril(diagonal=self.max_span_length - 1)
         return mention_mask
 
